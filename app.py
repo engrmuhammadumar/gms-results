@@ -99,7 +99,7 @@ df = load_data()
 st.markdown(
     """
 <div style="text-align:center; padding: 8px 0 2px 0;">
-  <h1 style="margin-bottom: 0;">🏫 GMS School Scholarship Test Results 2026</h1>
+  <h1 style="margin-bottom: 0;">GMS School Scholarship Test Results 2026</h1>
   <p style="margin-top: 6px; font-size: 16px;">
     Search your result using <b>Roll No</b> or <b>Name</b>
   </p>
@@ -111,9 +111,9 @@ st.markdown(
 with st.expander("📌 Guide: What do the statuses mean?", expanded=True):
     st.markdown(
         """
-- ✅ **Short List**: You are selected for the next step. The school will contact you / follow school instructions.
+- ✅ **Short List**: You are selected for the next step. GMS will contact you for the interview soon.
 - ⏳ **Waiting List**: You are not selected yet, but you may be selected if seats become available.
-- 🔁 **Try Again**: You are not selected this time. Please prepare and apply again in the next test.
+- 🔁 **Try Again**: You are not selected this time. Please prepare and apply again next year.
 """
     )
 
@@ -161,3 +161,4 @@ if query:
 
 else:
     st.info("Type your Roll No or Name above to view the result.")
+
