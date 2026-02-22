@@ -8,87 +8,156 @@ st.set_page_config(
     layout="wide",
 )
 
-# ---------- Helpers ----------
+FILE_NAME = "all_result.xlsx"
+
+
 def norm(s: str) -> str:
     s = "" if s is None else str(s)
     return re.sub(r"[^a-z0-9]+", "", s.lower())
 
+
 @st.cache_data
-def load_data():
-    # FAST option: if you convert to CSV, use read_csv (much faster than Excel)
-     df = pd.read_csv("all_result.csv")
+def load_data() -> pd.DataFrame:
+    # Your header starts at row 2 in Excel, so header=1
+    #df = pd.read_excel(FILE_NAME, header=1)
+    df = pd.read_csv("all_result.csv")
 
-    # Current: Excel
-    #df = pd.read_excel("all_result.xlsx", header=1)
-
-    # remove Unnamed columns
+    # Remove "Unnamed" columns (extra blank column)
     df = df.loc[:, ~df.columns.astype(str).str.contains(r"^Unnamed", case=False, regex=True)]
+
+    # Clean column names
     df.columns = [str(c).strip().lower() for c in df.columns]
+
+    # Remove fully empty rows
     df = df.dropna(how="all")
 
-    # keep only needed columns
+    # Keep only required columns
     keep = ["roll_no", "name", "father name", "current class", "marks", "status"]
     df = df[keep].copy()
 
-    # normalized keys
+    # Add normalized search keys
     df["_roll_key"] = df["roll_no"].astype(str).map(norm)
     df["_name_key"] = df["name"].astype(str).map(norm)
 
     return df
 
-df = load_data()
 
-# ---------- UI ----------
-st.markdown(
-    """
-    <div style="text-align:center; padding: 10px 0 4px 0;">
-        <h1 style="margin-bottom: 0;">🏫 GMS School Scholarship Test Results 2026</h1>
-        <p style="margin-top: 6px; font-size: 16px;">
-            Search your result using <b>Roll No</b> or <b>Name</b>
-        </p>
-    </div>
-    """,
-    unsafe_allow_html=True
-)
+def status_badge(status: str) -> str:
+    s = (status or "").strip().lower()
+    if "short" in s:
+        return "✅ Short List"
+    if "wait" in s:
+        return "⏳ Waiting List"
+    if "try" in s:
+        return "🔁 Try Again"
+    return status
 
-# Info / meanings box
-with st.expander("📌 What do these statuses mean? (Read this)", expanded=True):
+
+def render_card(row: pd.Series) -> None:
+    # Simple, clean result card (looks good on mobile too)
+    roll_no = row.get("roll_no", "")
+    name = row.get("name", "")
+    father = row.get("father name", "")
+    cls = row.get("current class", "")
+    marks = row.get("marks", "")
+    status = status_badge(row.get("status", ""))
+
     st.markdown(
-        """
-- ✅ **Short List**: You are selected for the next step. The school will contact you / you should follow the next instructions.
-- ⏳ **Waiting List**: You are not selected yet, but you may be selected if seats become available.
-- 🔁 **Try Again**: You are not selected this time. Please prepare and apply again in the next test.
-        """
+        f"""
+<div style="
+    border:1px solid rgba(49,51,63,0.2);
+    border-radius:14px;
+    padding:16px 18px;
+    margin:10px 0;
+    box-shadow: 0 2px 10px rgba(0,0,0,0.04);
+">
+  <div style="display:flex; justify-content:space-between; flex-wrap:wrap; gap:10px;">
+    <div>
+      <div style="font-size:18px; font-weight:700;">{name}</div>
+      <div style="opacity:0.75; margin-top:2px;">Roll No: <b>{roll_no}</b></div>
+    </div>
+    <div style="font-size:16px; font-weight:700;">{status}</div>
+  </div>
+
+  <hr style="margin:12px 0; opacity:0.25;">
+
+  <div style="display:grid; grid-template-columns: 1fr 1fr; gap:10px;">
+    <div><span style="opacity:0.7;">Father Name:</span><br><b>{father}</b></div>
+    <div><span style="opacity:0.7;">Class:</span><br><b>{cls}</b></div>
+    <div><span style="opacity:0.7;">Marks:</span><br><b>{marks}</b></div>
+    <div><span style="opacity:0.7;">Status:</span><br><b>{status}</b></div>
+  </div>
+</div>
+        """,
+        unsafe_allow_html=True,
     )
 
-# Search area (nice layout)
-col1, col2 = st.columns([3, 1], vertical_alignment="bottom")
 
-with col1:
-    query = st.text_input("🔎 Enter Roll No or Name (example: GMS - 9 / Zunaira)", placeholder="Type Roll No or Name...").strip()
+# ---------- App ----------
+df = load_data()
 
-with col2:
-    exact_roll_only = st.toggle("🎯 Exact Roll Match", value=False, help="If ON, Roll No must match exactly (recommended).")
+st.markdown(
+    """
+<div style="text-align:center; padding: 8px 0 2px 0;">
+  <h1 style="margin-bottom: 0;">🏫 GMS School Scholarship Test Results 2026</h1>
+  <p style="margin-top: 6px; font-size: 16px;">
+    Search your result using <b>Roll No</b> or <b>Name</b>
+  </p>
+</div>
+""",
+    unsafe_allow_html=True,
+)
+
+with st.expander("📌 Guide: What do the statuses mean?", expanded=True):
+    st.markdown(
+        """
+- ✅ **Short List**: You are selected for the next step. The school will contact you / follow school instructions.
+- ⏳ **Waiting List**: You are not selected yet, but you may be selected if seats become available.
+- 🔁 **Try Again**: You are not selected this time. Please prepare and apply again in the next test.
+"""
+    )
+
+c1, c2 = st.columns([3, 1], vertical_alignment="bottom")
+
+with c1:
+    query = st.text_input(
+        "🔎 Search by Roll No or Name",
+        placeholder="Example: GMS - 9  or  Zunaira",
+    ).strip()
+
+with c2:
+    show_all_matches = st.toggle(
+        "Show all matches",
+        value=True,
+        help="If OFF, only the first best match will be shown (looks cleaner).",
+    )
 
 st.divider()
 
 if query:
     q = norm(query)
 
-    # Fast path: exact roll match if toggle is ON
-    if exact_roll_only:
-        results = df[df["_roll_key"] == q]
-    else:
-        results = df[df["_roll_key"].str.contains(q, na=False) | df["_name_key"].str.contains(q, na=False)]
+    results = df[df["_roll_key"].str.contains(q, na=False) | df["_name_key"].str.contains(q, na=False)]
 
     if results.empty:
         st.warning("No result found. Please check spelling / roll number.")
     else:
         st.success(f"Found {len(results)} result(s).")
-        st.dataframe(
-            results[["roll_no", "name", "father name", "current class", "marks", "status"]],
-            use_container_width=True,
-            hide_index=True
+
+        # Sort: exact roll first, then exact name, then others
+        results = results.copy()
+        results["_score"] = (
+            (results["_roll_key"] == q).astype(int) * 3
+            + (results["_name_key"] == q).astype(int) * 2
         )
+        results = results.sort_values(by="_score", ascending=False).drop(columns=["_score"])
+
+        if not show_all_matches:
+            results = results.head(1)
+
+        # Render cards
+        for _, row in results.iterrows():
+            render_card(row)
+
 else:
     st.info("Type your Roll No or Name above to view the result.")
