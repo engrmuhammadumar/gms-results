@@ -2,61 +2,93 @@ import re
 import pandas as pd
 import streamlit as st
 
-st.set_page_config(page_title="Student Result Portal", page_icon="📄", layout="wide")
+st.set_page_config(
+    page_title="GMS School Scholarship Test Results 2026",
+    page_icon="🏫",
+    layout="wide",
+)
 
-FILE_NAME = "all_result.xlsx"   # keep this file in the same folder as app.py
-
-def normalize(text: str) -> str:
-    """Lowercase and remove spaces/symbols so searches like 'GMS9' match 'GMS - 9'."""
-    text = "" if text is None else str(text)
-    return re.sub(r"[^a-z0-9]+", "", text.lower())
+# ---------- Helpers ----------
+def norm(s: str) -> str:
+    s = "" if s is None else str(s)
+    return re.sub(r"[^a-z0-9]+", "", s.lower())
 
 @st.cache_data
 def load_data():
-    # Your excel header is on row 2 (index 1), so header=1
-    df = pd.read_excel(FILE_NAME, header=1)
+    # FAST option: if you convert to CSV, use read_csv (much faster than Excel)
+     df = pd.read_csv("all_result.csv")
 
-    # Drop the extra empty column like "Unnamed: 0"
+    # Current: Excel
+    #df = pd.read_excel("all_result.xlsx", header=1)
+
+    # remove Unnamed columns
     df = df.loc[:, ~df.columns.astype(str).str.contains(r"^Unnamed", case=False, regex=True)]
-
-    # Clean column names
     df.columns = [str(c).strip().lower() for c in df.columns]
-
-    # Ensure required columns exist (based on your sheet)
-    # roll_no, name, father name, current class, marks, status
-    for col in ["roll_no", "name", "father name", "current class", "marks", "status"]:
-        if col not in df.columns:
-            st.error(f"Missing column: {col}. Found columns: {list(df.columns)}")
-            st.stop()
-
-    # Drop fully empty rows
     df = df.dropna(how="all")
 
-    # Create normalized search keys
-    df["_roll_key"] = df["roll_no"].astype(str).map(normalize)
-    df["_name_key"] = df["name"].astype(str).map(normalize)
+    # keep only needed columns
+    keep = ["roll_no", "name", "father name", "current class", "marks", "status"]
+    df = df[keep].copy()
+
+    # normalized keys
+    df["_roll_key"] = df["roll_no"].astype(str).map(norm)
+    df["_name_key"] = df["name"].astype(str).map(norm)
 
     return df
 
 df = load_data()
 
-st.title("📄 Student Result Portal")
+# ---------- UI ----------
+st.markdown(
+    """
+    <div style="text-align:center; padding: 10px 0 4px 0;">
+        <h1 style="margin-bottom: 0;">🏫 GMS School Scholarship Test Results 2026</h1>
+        <p style="margin-top: 6px; font-size: 16px;">
+            Search your result using <b>Roll No</b> or <b>Name</b>
+        </p>
+    </div>
+    """,
+    unsafe_allow_html=True
+)
 
-query = st.text_input("Search by Roll No or Name (e.g., GMS - 9 / Taqwa Ashfaq)").strip()
+# Info / meanings box
+with st.expander("📌 What do these statuses mean? (Read this)", expanded=True):
+    st.markdown(
+        """
+- ✅ **Short List**: You are selected for the next step. The school will contact you / you should follow the next instructions.
+- ⏳ **Waiting List**: You are not selected yet, but you may be selected if seats become available.
+- 🔁 **Try Again**: You are not selected this time. Please prepare and apply again in the next test.
+        """
+    )
+
+# Search area (nice layout)
+col1, col2 = st.columns([3, 1], vertical_alignment="bottom")
+
+with col1:
+    query = st.text_input("🔎 Enter Roll No or Name (example: GMS - 9 / Zunaira)", placeholder="Type Roll No or Name...").strip()
+
+with col2:
+    exact_roll_only = st.toggle("🎯 Exact Roll Match", value=False, help="If ON, Roll No must match exactly (recommended).")
+
+st.divider()
 
 if query:
-    q = normalize(query)
+    q = norm(query)
 
-    results = df[(df["_roll_key"].str.contains(q, na=False)) | (df["_name_key"].str.contains(q, na=False))]
-
-    # Show only required columns
-    show_cols = ["roll_no", "name", "father name", "current class", "marks", "status"]
-    results = results[show_cols]
+    # Fast path: exact roll match if toggle is ON
+    if exact_roll_only:
+        results = df[df["_roll_key"] == q]
+    else:
+        results = df[df["_roll_key"].str.contains(q, na=False) | df["_name_key"].str.contains(q, na=False)]
 
     if results.empty:
-        st.warning("No result found. Please check spelling / roll number format.")
+        st.warning("No result found. Please check spelling / roll number.")
     else:
         st.success(f"Found {len(results)} result(s).")
-        st.dataframe(results, use_container_width=True)
+        st.dataframe(
+            results[["roll_no", "name", "father name", "current class", "marks", "status"]],
+            use_container_width=True,
+            hide_index=True
+        )
 else:
-    st.info("Type a student Name or Roll No to view the result.")
+    st.info("Type your Roll No or Name above to view the result.")
