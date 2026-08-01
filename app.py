@@ -1,85 +1,137 @@
+import html
 import re
+from pathlib import Path
+
 import pandas as pd
 import streamlit as st
 
 st.set_page_config(
     page_title="GMS School Scholarship Test Results 2026",
+    page_icon="🏫",
     layout="wide",
 )
 
-DATA_FILE = "all_result.csv"
+# Put this Excel file in the same GitHub folder as app.py.
+DATA_FILE = Path(__file__).with_name("GMS Result 2026.xlsx")
+
+# Accepted alternatives for each required field.
+COLUMN_ALIASES = {
+    "roll_no": ["roll_no", "roll no", "roll number", "roll", "serial no", "sr no"],
+    "name": ["name", "student name", "candidate name"],
+    "father_name": ["father name", "father_name", "father's name", "guardian name"],
+    "current_class": ["current class", "current_class", "class", "grade"],
+    "marks": ["marks", "obtained marks", "score", "total marks"],
+    "status": ["status", "result", "selection status", "remarks"],
+}
 
 
-def norm(s: str) -> str:
-    s = "" if s is None else str(s)
-    return re.sub(r"[^a-z0-9]+", "", s.lower())
+def clean_text(value) -> str:
+    """Convert Excel values into clean display strings."""
+    if pd.isna(value):
+        return ""
+    text = str(value).strip()
+    # Excel sometimes reads whole-number IDs as 9.0.
+    if re.fullmatch(r"\d+\.0", text):
+        text = text[:-2]
+    return text
 
 
-def looks_like_roll(q: str) -> bool:
-    """
-    Decide if input is intended as roll no.
-    Examples: 'GMS-9', 'gms 9', 'GMS - 500', '9' (we will treat numbers as roll only if length >=2)
-    """
-    qn = norm(q)
-    if qn.startswith("gms"):
-        return True
-    # if purely digits, only treat as roll if 2+ digits (prevents "5" matching too much)
-    if qn.isdigit() and len(qn) >= 2:
-        return True
-    return False
+def norm(value) -> str:
+    """Normalize text for punctuation/case-insensitive matching."""
+    return re.sub(r"[^a-z0-9]+", "", clean_text(value).lower())
 
 
-@st.cache_data
-def load_data() -> pd.DataFrame:
-    df = pd.read_csv(DATA_FILE)
+def normalize_header(value) -> str:
+    return re.sub(r"\s+", " ", str(value).strip().lower().replace("_", " "))
 
-    # Remove Unnamed columns (if any)
-    df = df.loc[:, ~df.columns.astype(str).str.contains(r"^Unnamed", case=False, regex=True)]
 
-    # Clean column names
-    df.columns = [str(c).strip().lower() for c in df.columns]
+def find_column(columns, aliases):
+    normalized = {normalize_header(c): c for c in columns}
+    for alias in aliases:
+        key = normalize_header(alias)
+        if key in normalized:
+            return normalized[key]
+    return None
 
-    # Remove empty rows
-    df = df.dropna(how="all")
 
-    # Keep only required columns
-    keep = ["roll_no", "name", "father name", "current class", "marks", "status"]
-    df = df[keep].copy()
+@st.cache_data(show_spinner=False)
+def load_data(file_path: str) -> pd.DataFrame:
+    path = Path(file_path)
+    if not path.exists():
+        raise FileNotFoundError(
+            f"'{path.name}' was not found. Add it to the same folder as app.py."
+        )
 
-    # Normalized keys for fast matching
-    df["_roll_key"] = df["roll_no"].astype(str).map(norm)
-    df["_name_key"] = df["name"].astype(str).map(norm)
-    df["_father_key"] = df["father name"].astype(str).map(norm)
+    # sheet_name=0 reads the first worksheet.
+    raw = pd.read_excel(path, sheet_name=0, engine="openpyxl")
+    raw = raw.loc[:, ~raw.columns.astype(str).str.contains(r"^Unnamed", case=False, regex=True)]
+    raw = raw.dropna(how="all")
 
+    mapping = {}
+    missing = []
+    for standard_name, aliases in COLUMN_ALIASES.items():
+        actual = find_column(raw.columns, aliases)
+        if actual is None:
+            missing.append(standard_name)
+        else:
+            mapping[actual] = standard_name
+
+    if missing:
+        available = ", ".join(map(str, raw.columns))
+        raise ValueError(
+            "Could not identify these required columns: "
+            + ", ".join(missing)
+            + f". Columns found in Excel: {available}"
+        )
+
+    df = raw.rename(columns=mapping)[list(COLUMN_ALIASES)].copy()
+
+    for column in df.columns:
+        df[column] = df[column].map(clean_text)
+
+    df = df[
+        (df["roll_no"] != "")
+        | (df["name"] != "")
+        | (df["father_name"] != "")
+    ].copy()
+
+    df["_roll_key"] = df["roll_no"].map(norm)
+    df["_name_key"] = df["name"].map(norm)
+    df["_father_key"] = df["father_name"].map(norm)
     return df
 
 
 def status_badge(status: str) -> str:
-    s = (status or "").strip().lower()
-    if "short" in s:
+    s = clean_text(status)
+    key = s.lower()
+    if "short" in key or "select" in key or "qualif" in key:
         return "✅ Short List"
-    if "wait" in s:
+    if "wait" in key:
         return "⏳ Waiting List"
-    if "try" in s:
+    if "try" in key or "not select" in key or "fail" in key:
         return "🔁 Try Again"
-    return status
+    return s or "Not specified"
+
+
+def safe(value) -> str:
+    return html.escape(clean_text(value))
 
 
 def render_card(row: pd.Series) -> None:
-    roll_no = row.get("roll_no", "")
-    name = row.get("name", "")
-    father = row.get("father name", "")
-    cls = row.get("current class", "")
-    marks = row.get("marks", "")
-    status = status_badge(row.get("status", ""))
+    roll_no = safe(row.get("roll_no", ""))
+    name = safe(row.get("name", ""))
+    father = safe(row.get("father_name", ""))
+    current_class = safe(row.get("current_class", ""))
+    marks = safe(row.get("marks", ""))
+    status = safe(status_badge(row.get("status", "")))
 
     st.markdown(
         f"""
 <div style="
-    border:1px solid rgba(49,51,63,0.2);
-    border-radius:14px;
-    padding:16px 18px;
-    margin:10px 0;
+    border: 1px solid rgba(49,51,63,0.20);
+    border-radius: 14px;
+    padding: 16px 18px;
+    margin: 10px 0;
     box-shadow: 0 2px 10px rgba(0,0,0,0.06);
 ">
   <div style="display:flex; justify-content:space-between; flex-wrap:wrap; gap:10px;">
@@ -89,103 +141,116 @@ def render_card(row: pd.Series) -> None:
     </div>
     <div style="font-size:16px; font-weight:700;">{status}</div>
   </div>
-
   <hr style="margin:12px 0; opacity:0.25;">
-
-  <div style="display:grid; grid-template-columns: 1fr 1fr; gap:10px;">
+  <div style="display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:10px;">
     <div><span style="opacity:0.7;">Father Name:</span><br><b>{father}</b></div>
-    <div><span style="opacity:0.7;">Class:</span><br><b>{cls}</b></div>
+    <div><span style="opacity:0.7;">Class:</span><br><b>{current_class}</b></div>
     <div><span style="opacity:0.7;">Marks:</span><br><b>{marks}</b></div>
     <div><span style="opacity:0.7;">Status:</span><br><b>{status}</b></div>
   </div>
 </div>
-        """,
+""",
         unsafe_allow_html=True,
     )
 
 
-# ---------- App ----------
-df = load_data()
+def show_results(results: pd.DataFrame) -> None:
+    if results.empty:
+        st.warning("No result found. Please check the spelling or roll number.")
+        return
+
+    st.success(f"Found {len(results)} result(s).")
+    for _, row in results.iterrows():
+        render_card(row)
+
+
+try:
+    df = load_data(str(DATA_FILE))
+except Exception as error:
+    st.error("The result file could not be loaded.")
+    st.code(str(error))
+    st.info(
+        "Make sure the Excel filename is exactly 'GMS Result 2026.xlsx' and that "
+        "its first row contains column headings."
+    )
+    st.stop()
 
 st.markdown(
     """
-<div style="text-align:center; padding: 8px 0 2px 0;">
-  <h1 style="margin-bottom: 0;">🏫 GMS School Scholarship Test Results 2026</h1>
-  <p style="margin-top: 6px; font-size: 16px;">
-    Enter <b>Roll No</b> (recommended) — or use <b>Name + Father Name</b> if you don’t know the roll number.
+<div style="text-align:center; padding:8px 0 2px 0;">
+  <h1 style="margin-bottom:0;">🏫 GMS School Scholarship Test Results 2026</h1>
+  <p style="margin-top:6px; font-size:16px;">
+    Enter your <b>Roll No</b>, or search using <b>Student Name + Father Name</b>.
   </p>
 </div>
 """,
     unsafe_allow_html=True,
 )
 
-# ---- SEARCH FIRST (Above guide) ----
 st.subheader("🔎 Search")
-
 tab1, tab2 = st.tabs(["Search by Roll No", "Search by Name + Father Name"])
 
 with tab1:
-    roll_input = st.text_input("Enter Roll No (example: GMS - 9)", placeholder="GMS - 9").strip()
-    roll_btn = st.button("Search Roll No", type="primary")
+    with st.form("roll_search_form"):
+        roll_input = st.text_input(
+            "Enter Roll No",
+            placeholder="Example: GMS - 9",
+        ).strip()
+        roll_btn = st.form_submit_button("Search Roll No", type="primary")
 
 with tab2:
-    name_input = st.text_input("Enter Student Name", placeholder="Example: Zunaira").strip()
-    father_input = st.text_input("Enter Father Name", placeholder="Example: Shad Muhammad").strip()
-    name_btn = st.button("Search Name + Father Name", type="primary")
+    with st.form("name_search_form"):
+        name_input = st.text_input(
+            "Enter Student Name",
+            placeholder="Example: Zunaira",
+        ).strip()
+        father_input = st.text_input(
+            "Enter Father Name",
+            placeholder="Example: Shad Muhammad",
+        ).strip()
+        name_btn = st.form_submit_button("Search Name + Father Name", type="primary")
 
 st.divider()
 
-# ---- RESULTS ----
-def show_results(results: pd.DataFrame):
-    if results.empty:
-        st.warning("No result found. Please check spelling / roll number.")
-        return
-    # Usually a roll no should show 1 record, but show all if duplicates exist
-    st.success(f"Found {len(results)} result(s).")
-    for _, row in results.iterrows():
-        render_card(row)
-
-# Roll search logic (primary)
-if roll_btn and roll_input:
-    q = norm(roll_input)
-
-    # Prevent too-short search like "5" causing many matches
-    if q.isdigit() and len(q) < 2:
-        st.warning("Please enter at least 2 digits for roll number (example: GMS - 50).")
+if roll_btn:
+    if not roll_input:
+        st.warning("Please enter a roll number.")
     else:
-        # Prefer exact match first
-        exact = df[df["_roll_key"] == q]
-
-        if not exact.empty:
-            show_results(exact)
+        q = norm(roll_input)
+        if q.isdigit() and len(q) < 1:
+            st.warning("Please enter a valid roll number.")
         else:
-            # Starts-with match is safer than contains (prevents '5' matching everything)
-            starts = df[df["_roll_key"].str.startswith(q, na=False)]
-            show_results(starts)
+            exact = df[df["_roll_key"] == q]
 
-# Name + Father search logic (both required)
+            # Also allow a user to enter only the numeric part, e.g. 9 for GMS-9.
+            if exact.empty and q.isdigit():
+                exact = df[df["_roll_key"].str.fullmatch(rf"(?:gms)?0*{re.escape(q)}", na=False)]
+
+            show_results(exact)
+
 if name_btn:
     if not name_input or not father_input:
-        st.warning("Please enter BOTH Name and Father Name.")
+        st.warning("Please enter both Student Name and Father Name.")
     else:
         nq = norm(name_input)
         fq = norm(father_input)
 
-        # Require both to match (contains is okay here, but both together makes it safe)
-        results = df[
-            df["_name_key"].str.contains(nq, na=False)
-            & df["_father_key"].str.contains(fq, na=False)
-        ]
-        show_results(results)
+        if len(nq) < 2 or len(fq) < 2:
+            st.warning("Please enter at least 2 letters in both fields.")
+        else:
+            results = df[
+                df["_name_key"].str.contains(nq, regex=False, na=False)
+                & df["_father_key"].str.contains(fq, regex=False, na=False)
+            ]
+            show_results(results)
 
-# ---- GUIDE BELOW SEARCH ----
 with st.expander("📌 Guide: What do the statuses mean?", expanded=True):
     st.markdown(
         """
-- ✅ **Short List**: You are selected for the next step. GMS will contact you for the interview soon.
-- ⏳ **Waiting List**: You are not selected yet, but you may be selected if seats become available.
-- 🔁 **Try Again**: You are not selected this time. Please prepare and apply again in the next test.
+- ✅ **Short List**: Selected for the next step. GMS will contact the candidate for an interview.
+- ⏳ **Waiting List**: Not selected yet, but selection may be possible if a seat becomes available.
+- 🔁 **Try Again**: Not selected in this test. The candidate may prepare and apply again next time.
 """
     )
 
-st.caption("Tip: For fastest and most accurate search, use Roll Number.")
+st.caption("Tip: Roll Number gives the fastest and most accurate result.")
