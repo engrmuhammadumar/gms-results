@@ -5,7 +5,6 @@ from pathlib import Path
 import pandas as pd
 import streamlit as st
 
-
 # ---------------------------------------------------------
 # Page configuration
 # ---------------------------------------------------------
@@ -321,54 +320,34 @@ def render_card(row: pd.Series) -> None:
     father_name = safe_html(row.get("father_name", ""))
     gender = safe_html(row.get("gender", "")) or "—"
     marks = safe_html(row.get("marks", "")) or "—"
-    status = safe_html(
-        format_status(row.get("status", ""))
-    )
+    status = safe_html(format_status(row.get("status", "")))
 
-    st.markdown(
-        f"""
-<div style="border:1px solid rgba(49,51,63,0.20); border-radius:14px; padding:18px; margin:12px 0; box-shadow:0 2px 10px rgba(0,0,0,0.06);">
-    <div style="display:flex; justify-content:space-between; align-items:flex-start; flex-wrap:wrap; gap:12px;">
-        <div>
-            <div style="font-size:20px; font-weight:700;">
-                {name}
-            </div>
-            <div style="opacity:0.75; margin-top:4px;">
-                Roll No: <b>{roll_no}</b>
-            </div>
-        </div>
-        <div style="font-size:16px; font-weight:700;">
-            {status}
-        </div>
-    </div>
-
-    <hr style="margin:14px 0; opacity:0.25;">
-
-    <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(180px, 1fr)); gap:14px;">
-        <div>
-            <span style="opacity:0.7;">Father Name:</span><br>
-            <b>{father_name}</b>
-        </div>
-
-        <div>
-            <span style="opacity:0.7;">Gender:</span><br>
-            <b>{gender}</b>
-        </div>
-
-        <div>
-            <span style="opacity:0.7;">Marks:</span><br>
-            <b>{marks}</b>
-        </div>
-
-        <div>
-            <span style="opacity:0.7;">Status:</span><br>
-            <b>{status}</b>
-        </div>
-    </div>
+    card_html = f"""<div style="border:1px solid rgba(49,51,63,0.20); border-radius:14px; padding:18px; margin:12px 0; box-shadow:0 2px 10px rgba(0,0,0,0.06);">
+<div style="display:flex; justify-content:space-between; align-items:flex-start; flex-wrap:wrap; gap:12px;">
+<div>
+<div style="font-size:20px; font-weight:700;">{name}</div>
+<div style="opacity:0.75; margin-top:4px;">Roll No: <b>{roll_no}</b></div>
 </div>
-""",
-        unsafe_allow_html=True,
-    )
+<div style="font-size:16px; font-weight:700;">{status}</div>
+</div>
+<hr style="margin:14px 0; opacity:0.25;">
+<div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(150px, 1fr)); gap:14px;">
+<div>
+<span style="opacity:0.7;">Father Name:</span><br>
+<b>{father_name}</b>
+</div>
+<div>
+<span style="opacity:0.7;">Gender:</span><br>
+<b>{gender}</b>
+</div>
+<div>
+<span style="opacity:0.7;">Marks:</span><br>
+<b>{marks}</b>
+</div>
+</div>
+</div>"""
+
+    st.markdown(card_html, unsafe_allow_html=True)
 
 
 def show_results(results: pd.DataFrame) -> None:
@@ -481,9 +460,7 @@ if roll_button:
     else:
         query = normalize_search(roll_input)
 
-        results = df[
-            df["_roll_key"] == query
-        ]
+        results = df[df["_roll_key"] == query]
 
         # Support inputs such as GMS-554 when Excel contains 554
         if results.empty:
