@@ -7,7 +7,7 @@ import streamlit as st
 
 
 # ---------------------------------------------------------
-# Streamlit page settings
+# Page configuration
 # ---------------------------------------------------------
 st.set_page_config(
     page_title="GMS School Scholarship Test Results 2026",
@@ -15,12 +15,11 @@ st.set_page_config(
     layout="wide",
 )
 
-# Excel file must be in the same folder as app.py
 DATA_FILE = Path(__file__).with_name("GMS Result 2026.xlsx")
 
 
 # ---------------------------------------------------------
-# Accepted Excel column names
+# Accepted Excel column headings
 # ---------------------------------------------------------
 COLUMN_ALIASES = {
     "roll_no": [
@@ -65,32 +64,36 @@ COLUMN_ALIASES = {
 # Helper functions
 # ---------------------------------------------------------
 def clean_text(value) -> str:
-    """Convert Excel values to clean strings."""
+    """Convert Excel values into clean strings."""
     if pd.isna(value):
         return ""
 
     text = str(value).strip()
 
-    # Convert values such as 554.0 to 554
+    # Excel may convert roll numbers such as 554 into 554.0
     if re.fullmatch(r"\d+\.0", text):
         return text[:-2]
 
     return text
 
 
-def norm(value) -> str:
-    """Normalize values for searching."""
-    return re.sub(r"[^a-z0-9]+", "", clean_text(value).lower())
+def normalize_search(value) -> str:
+    """Normalize text for searching."""
+    return re.sub(
+        r"[^a-z0-9]+",
+        "",
+        clean_text(value).lower(),
+    )
 
 
 def normalize_header(value) -> str:
-    """Normalize Excel headings."""
+    """Normalize Excel column names."""
     text = str(value).strip().lower().replace("_", " ")
     return re.sub(r"\s+", " ", text)
 
 
 def find_column(columns, aliases):
-    """Find an Excel column using possible alternative names."""
+    """Find a matching Excel column using alternative headings."""
     normalized_columns = {
         normalize_header(column): column
         for column in columns
@@ -106,30 +109,25 @@ def find_column(columns, aliases):
 
 
 def infer_gender_from_sheet(sheet_name: str) -> str:
-    """Use the worksheet name when gender is missing."""
-    key = normalize_header(sheet_name)
+    """Infer gender from worksheet name."""
+    sheet_key = normalize_header(sheet_name)
 
-    if "female" in key:
+    if "female" in sheet_key:
         return "Female"
 
-    if "male" in key and "female" not in key:
+    if "male" in sheet_key and "female" not in sheet_key:
         return "Male"
 
     return ""
 
 
-def infer_status_from_sheet(sheet_name: str) -> str:
-    """Mark students as absent when loaded from the absent sheet."""
-    key = normalize_header(sheet_name)
-
-    if "absent" in key:
-        return "Absent"
-
-    return ""
+def is_absent_sheet(sheet_name: str) -> bool:
+    """Check whether the worksheet is the absent-students sheet."""
+    return "absent" in normalize_header(sheet_name)
 
 
 # ---------------------------------------------------------
-# Load all Excel worksheets
+# Load all Excel sheets
 # ---------------------------------------------------------
 @st.cache_data(show_spinner=False)
 def load_data(file_path: str) -> pd.DataFrame:
@@ -141,8 +139,6 @@ def load_data(file_path: str) -> pd.DataFrame:
             "Upload it to the same GitHub folder as app.py."
         )
 
-    # Read every worksheet, including:
-    # Male, Female and Absent Students
     workbook = pd.read_excel(
         path,
         sheet_name=None,
@@ -153,11 +149,8 @@ def load_data(file_path: str) -> pd.DataFrame:
     skipped_sheets = []
 
     for sheet_name, raw in workbook.items():
-
-        # Remove completely empty rows
         raw = raw.dropna(how="all")
 
-        # Remove Excel's unwanted Unnamed columns
         raw = raw.loc[
             :,
             ~raw.columns.astype(str).str.contains(
@@ -173,14 +166,16 @@ def load_data(file_path: str) -> pd.DataFrame:
         column_mapping = {}
 
         for standard_name, aliases in COLUMN_ALIASES.items():
-            actual_column = find_column(raw.columns, aliases)
+            actual_column = find_column(
+                raw.columns,
+                aliases,
+            )
 
             if actual_column is not None:
                 column_mapping[actual_column] = standard_name
 
         found_columns = set(column_mapping.values())
 
-        # Only these three columns are compulsory
         required_columns = {
             "roll_no",
             "name",
@@ -193,32 +188,35 @@ def load_data(file_path: str) -> pd.DataFrame:
 
         frame = raw.rename(columns=column_mapping).copy()
 
-        # Add optional columns when a sheet does not contain them
-        for optional_column in ["gender", "marks", "status"]:
+        for optional_column in [
+            "gender",
+            "marks",
+            "status",
+        ]:
             if optional_column not in frame.columns:
                 frame[optional_column] = ""
 
-        inferred_gender = infer_gender_from_sheet(sheet_name)
-        inferred_status = infer_status_from_sheet(sheet_name)
+        # Clean values
+        for column in [
+            "roll_no",
+            "name",
+            "father_name",
+            "gender",
+            "marks",
+            "status",
+        ]:
+            frame[column] = frame[column].map(clean_text)
 
-        # Clean gender
-        frame["gender"] = frame["gender"].map(clean_text)
+        # Infer gender from worksheet name when needed
+        inferred_gender = infer_gender_from_sheet(sheet_name)
 
         frame.loc[
             frame["gender"] == "",
             "gender",
         ] = inferred_gender
 
-        # Clean status
-        frame["status"] = frame["status"].map(clean_text)
-
-        frame.loc[
-            frame["status"] == "",
-            "status",
-        ] = inferred_status
-
-        # Force absent status for the Absent Students sheet
-        if "absent" in normalize_header(sheet_name):
+        # Force absent status for absent worksheet
+        if is_absent_sheet(sheet_name):
             frame["status"] = "Absent"
             frame["marks"] = ""
 
@@ -236,11 +234,7 @@ def load_data(file_path: str) -> pd.DataFrame:
             ]
         ].copy()
 
-        # Clean all values
-        for column in frame.columns:
-            frame[column] = frame[column].map(clean_text)
-
-        # Remove rows without useful student information
+        # Remove empty records
         frame = frame[
             (frame["roll_no"] != "")
             | (frame["name"] != "")
@@ -254,14 +248,15 @@ def load_data(file_path: str) -> pd.DataFrame:
 
         raise ValueError(
             "No usable result sheets were found. "
-            "Every sheet must contain Name, Father Name and Roll No. "
+            "Each result sheet must contain Name, Father Name and Roll No. "
             f"Sheets found: {sheet_names}"
         )
 
-    # Combine Male, Female and Absent Students
-    df = pd.concat(all_frames, ignore_index=True)
+    df = pd.concat(
+        all_frames,
+        ignore_index=True,
+    )
 
-    # Remove duplicate records
     df = df.drop_duplicates(
         subset=[
             "roll_no",
@@ -272,10 +267,9 @@ def load_data(file_path: str) -> pd.DataFrame:
         keep="first",
     ).reset_index(drop=True)
 
-    # Create normalized search columns
-    df["_roll_key"] = df["roll_no"].map(norm)
-    df["_name_key"] = df["name"].map(norm)
-    df["_father_key"] = df["father_name"].map(norm)
+    df["_roll_key"] = df["roll_no"].map(normalize_search)
+    df["_name_key"] = df["name"].map(normalize_search)
+    df["_father_key"] = df["father_name"].map(normalize_search)
 
     df.attrs["skipped_sheets"] = skipped_sheets
 
@@ -283,9 +277,9 @@ def load_data(file_path: str) -> pd.DataFrame:
 
 
 # ---------------------------------------------------------
-# Result display functions
+# Status formatting
 # ---------------------------------------------------------
-def status_badge(status: str) -> str:
+def format_status(status: str) -> str:
     text = clean_text(status)
     key = text.lower()
 
@@ -313,92 +307,61 @@ def status_badge(status: str) -> str:
     return text or "Not specified"
 
 
-def safe(value) -> str:
-    """Prevent Excel text from breaking the HTML card."""
+def safe_html(value) -> str:
+    """Escape values before placing them in HTML."""
     return html.escape(clean_text(value))
 
 
+# ---------------------------------------------------------
+# Result card
+# ---------------------------------------------------------
 def render_card(row: pd.Series) -> None:
-    roll_no = safe(row.get("roll_no", ""))
-    name = safe(row.get("name", ""))
-    father_name = safe(row.get("father_name", ""))
-    gender = safe(row.get("gender", "")) or "—"
-    marks = safe(row.get("marks", "")) or "—"
-    status = safe(status_badge(row.get("status", "")))
+    roll_no = safe_html(row.get("roll_no", ""))
+    name = safe_html(row.get("name", ""))
+    father_name = safe_html(row.get("father_name", ""))
+    gender = safe_html(row.get("gender", "")) or "—"
+    marks = safe_html(row.get("marks", "")) or "—"
+    status = safe_html(
+        format_status(row.get("status", ""))
+    )
 
     st.markdown(
         f"""
-<div style="
-    border: 1px solid rgba(49, 51, 63, 0.20);
-    border-radius: 14px;
-    padding: 18px;
-    margin: 12px 0;
-    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.06);
-">
-
-    <div style="
-        display: flex;
-        justify-content: space-between;
-        align-items: flex-start;
-        flex-wrap: wrap;
-        gap: 12px;
-    ">
+<div style="border:1px solid rgba(49,51,63,0.20); border-radius:14px; padding:18px; margin:12px 0; box-shadow:0 2px 10px rgba(0,0,0,0.06);">
+    <div style="display:flex; justify-content:space-between; align-items:flex-start; flex-wrap:wrap; gap:12px;">
         <div>
-            <div style="
-                font-size: 20px;
-                font-weight: 700;
-            ">
+            <div style="font-size:20px; font-weight:700;">
                 {name}
             </div>
-
-            <div style="
-                opacity: 0.75;
-                margin-top: 4px;
-            ">
+            <div style="opacity:0.75; margin-top:4px;">
                 Roll No: <b>{roll_no}</b>
             </div>
         </div>
-
-        <div style="
-            font-size: 16px;
-            font-weight: 700;
-        ">
+        <div style="font-size:16px; font-weight:700;">
             {status}
         </div>
     </div>
 
-    <hr style="
-        margin: 14px 0;
-        opacity: 0.25;
-    ">
+    <hr style="margin:14px 0; opacity:0.25;">
 
-    <div style="
-        display: grid;
-        grid-template-columns:
-            repeat(auto-fit, minmax(180px, 1fr));
-        gap: 14px;
-    ">
+    <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(180px, 1fr)); gap:14px;">
         <div>
-            <span style="opacity: 0.7;">Father Name:</span>
-            <br>
+            <span style="opacity:0.7;">Father Name:</span><br>
             <b>{father_name}</b>
         </div>
 
         <div>
-            <span style="opacity: 0.7;">Gender:</span>
-            <br>
+            <span style="opacity:0.7;">Gender:</span><br>
             <b>{gender}</b>
         </div>
 
         <div>
-            <span style="opacity: 0.7;">Marks:</span>
-            <br>
+            <span style="opacity:0.7;">Marks:</span><br>
             <b>{marks}</b>
         </div>
 
         <div>
-            <span style="opacity: 0.7;">Status:</span>
-            <br>
+            <span style="opacity:0.7;">Status:</span><br>
             <b>{status}</b>
         </div>
     </div>
@@ -422,7 +385,7 @@ def show_results(results: pd.DataFrame) -> None:
 
 
 # ---------------------------------------------------------
-# Load Excel data
+# Load data
 # ---------------------------------------------------------
 try:
     df = load_data(str(DATA_FILE))
@@ -441,37 +404,24 @@ except Exception as error:
 
 
 # ---------------------------------------------------------
-# App heading
+# Header
 # ---------------------------------------------------------
+st.title("🏫 GMS School Scholarship Test Results 2026")
+
 st.markdown(
     """
-<div style="
-    text-align: center;
-    padding: 8px 0 4px 0;
-">
-    <h1 style="margin-bottom: 0;">
-        🏫 GMS School Scholarship Test Results 2026
-    </h1>
-
-    <p style="
-        margin-top: 8px;
-        font-size: 16px;
-    ">
-        Enter your <b>Roll No</b>, or search using
-        <b>Student Name + Father Name</b>.
-    </p>
-</div>
-""",
-    unsafe_allow_html=True,
+Enter your **Roll No**, or search using  
+**Student Name + Father Name**.
+"""
 )
 
 
 # ---------------------------------------------------------
-# Search interface
+# Search section
 # ---------------------------------------------------------
 st.subheader("🔎 Search")
 
-tab1, tab2 = st.tabs(
+tab_roll, tab_name = st.tabs(
     [
         "Search by Roll No",
         "Search by Name + Father Name",
@@ -479,22 +429,27 @@ tab1, tab2 = st.tabs(
 )
 
 
-# Roll-number search
-with tab1:
+# ---------------------------------------------------------
+# Roll-number search form
+# ---------------------------------------------------------
+with tab_roll:
     with st.form("roll_search_form"):
         roll_input = st.text_input(
             "Enter Roll No",
             placeholder="Example: 554",
         ).strip()
 
-        roll_btn = st.form_submit_button(
+        roll_button = st.form_submit_button(
             "Search Roll No",
             type="primary",
+            use_container_width=True,
         )
 
 
-# Name and father-name search
-with tab2:
+# ---------------------------------------------------------
+# Name search form
+# ---------------------------------------------------------
+with tab_name:
     with st.form("name_search_form"):
         name_input = st.text_input(
             "Enter Student Name",
@@ -506,9 +461,10 @@ with tab2:
             placeholder="Example: Bakht Zada",
         ).strip()
 
-        name_btn = st.form_submit_button(
+        name_button = st.form_submit_button(
             "Search Name + Father Name",
             type="primary",
+            use_container_width=True,
         )
 
 
@@ -518,31 +474,44 @@ st.divider()
 # ---------------------------------------------------------
 # Roll-number search logic
 # ---------------------------------------------------------
-if roll_btn:
+if roll_button:
     if not roll_input:
         st.warning("Please enter a roll number.")
 
     else:
-        query = norm(roll_input)
+        query = normalize_search(roll_input)
 
-        # First try exact match
-        results = df[df["_roll_key"] == query]
+        results = df[
+            df["_roll_key"] == query
+        ]
 
-        # Supports values such as GMS-554 when Excel contains 554
+        # Support inputs such as GMS-554 when Excel contains 554
         if results.empty:
-            numeric_query = re.sub(r"^gms", "", query)
+            numeric_query = re.sub(
+                r"^gms",
+                "",
+                query,
+            )
 
             if numeric_query.isdigit():
-                numeric_query = numeric_query.lstrip("0") or "0"
+                numeric_query = (
+                    numeric_query.lstrip("0") or "0"
+                )
 
                 normalized_rolls = (
                     df["_roll_key"]
-                    .str.replace(r"^gms", "", regex=True)
+                    .str.replace(
+                        r"^gms",
+                        "",
+                        regex=True,
+                    )
                     .str.lstrip("0")
                     .replace("", "0")
                 )
 
-                results = df[normalized_rolls == numeric_query]
+                results = df[
+                    normalized_rolls == numeric_query
+                ]
 
         show_results(results)
 
@@ -550,19 +519,19 @@ if roll_btn:
 # ---------------------------------------------------------
 # Name and father-name search logic
 # ---------------------------------------------------------
-if name_btn:
+if name_button:
     if not name_input or not father_input:
         st.warning(
             "Please enter both Student Name and Father Name."
         )
 
     else:
-        normalized_name = norm(name_input)
-        normalized_father = norm(father_input)
+        name_query = normalize_search(name_input)
+        father_query = normalize_search(father_input)
 
         if (
-            len(normalized_name) < 2
-            or len(normalized_father) < 2
+            len(name_query) < 2
+            or len(father_query) < 2
         ):
             st.warning(
                 "Please enter at least 2 letters in both fields."
@@ -571,12 +540,12 @@ if name_btn:
         else:
             results = df[
                 df["_name_key"].str.contains(
-                    normalized_name,
+                    name_query,
                     regex=False,
                     na=False,
                 )
                 & df["_father_key"].str.contains(
-                    normalized_father,
+                    father_query,
                     regex=False,
                     na=False,
                 )
