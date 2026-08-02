@@ -9,7 +9,7 @@ import streamlit as st
 # Page configuration
 # ---------------------------------------------------------
 st.set_page_config(
-    page_title="GMS School Scholarship Test Results 2026",
+    page_title="GMS Youth Scholarship Test Results 2026",
     page_icon="🏫",
     layout="wide",
 )
