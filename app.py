@@ -385,7 +385,7 @@ except Exception as error:
 # ---------------------------------------------------------
 # Header
 # ---------------------------------------------------------
-st.title("🏫 GMS School Scholarship Test Results 2026")
+st.title("🏫 GMS Youth Scholarship Test Results 2026")
 
 st.markdown(
     """
